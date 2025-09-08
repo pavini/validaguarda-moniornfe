@@ -47,14 +47,16 @@ echo.
 echo ⚠️  Se der erro de 'ThreadHandle', feche e execute novamente
 echo.
 
-REM Criar script temporário para fix de threading
+REM Criar script temporário para fix de threading e encoding
 echo import multiprocessing > temp_fix.py
+echo import sys >> temp_fix.py
 echo if __name__ == '__main__': >> temp_fix.py
 echo     try: >> temp_fix.py
 echo         multiprocessing.set_start_method('spawn', force=True) >> temp_fix.py
 echo     except: >> temp_fix.py
 echo         pass >> temp_fix.py
-echo     exec(open('main_refactored.py').read()) >> temp_fix.py
+echo     with open('main_refactored.py', 'r', encoding='utf-8') as f: >> temp_fix.py
+echo         exec(f.read()) >> temp_fix.py
 
 REM Executar com fix
 python temp_fix.py
