@@ -55,7 +55,7 @@ class WatchdogMonitorService(IFileMonitorService):
     
     def start_monitoring(self, folder_path: Path, callback: Callable[[Path], None]):
         """Start monitoring a folder for file changes"""
-        # Stop any existing monitoring
+        # Stop any existing monitoring  
         self.stop_monitoring()
         
         try:
@@ -68,8 +68,27 @@ class WatchdogMonitorService(IFileMonitorService):
             # Create event handler
             event_handler = NFEFileHandler(callback)
             
-            # Create and configure observer
-            self._observer = Observer()
+            # Windows-specific fix for ThreadHandle error
+            import sys
+            if sys.platform.startswith('win'):
+                # Try different observer backends for Windows
+                try:
+                    from watchdog.observers.polling import PollingObserver
+                    self._observer = PollingObserver()
+                    print("🔧 Usando PollingObserver para compatibilidade Windows")
+                except ImportError:
+                    # Fallback to regular Observer with error handling
+                    try:
+                        import multiprocessing
+                        multiprocessing.set_start_method('spawn', force=True)
+                    except RuntimeError:
+                        pass
+                    self._observer = Observer()
+                    print("🔧 Usando Observer padrão com fix multiprocessing")
+            else:
+                # Unix/Mac can use regular Observer
+                self._observer = Observer()
+            
             self._observer.schedule(
                 event_handler,
                 str(folder_path),
@@ -88,6 +107,25 @@ class WatchdogMonitorService(IFileMonitorService):
             print(f"   Tipos suportados: XML, ZIP, RAR, 7Z")
             
         except Exception as e:
+            if "'handle' must be a _ThreadHandle" in str(e):
+                print(f"❌ Erro ThreadHandle detectado - tentando solução alternativa...")
+                try:
+                    # Fallback: Use polling observer (mais lento mas funciona)
+                    from watchdog.observers.polling import PollingObserver
+                    self._observer = PollingObserver()
+                    self._observer.schedule(
+                        event_handler,
+                        str(folder_path),
+                        recursive=True
+                    )
+                    self._observer.start()
+                    self._monitoring_path = folder_path
+                    self._callback = callback
+                    print(f"✅ Monitoramento iniciado com PollingObserver: {folder_path}")
+                    return
+                except Exception as fallback_error:
+                    print(f"❌ Fallback também falhou: {fallback_error}")
+            
             print(f"❌ Erro ao iniciar monitoramento: {e}")
             self.stop_monitoring()
             raise
