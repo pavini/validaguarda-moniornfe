@@ -97,7 +97,19 @@ class WatchdogMonitorService(IFileMonitorService):
         if self._observer and self._observer.is_alive():
             try:
                 self._observer.stop()
-                self._observer.join(timeout=5)  # Wait up to 5 seconds for clean shutdown
+                # Fix for Windows ThreadHandle error
+                import sys
+                import time
+                if sys.platform.startswith('win'):
+                    # Windows compatibility - wait without join()
+                    max_wait = 5
+                    waited = 0
+                    while self._observer.is_alive() and waited < max_wait:
+                        time.sleep(0.1)
+                        waited += 0.1
+                else:
+                    # Unix systems can use join() normally
+                    self._observer.join(timeout=5)
                 print("🛑 Monitoramento parado")
             except Exception as e:
                 print(f"⚠️  Erro ao parar monitoramento: {e}")
