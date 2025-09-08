@@ -89,7 +89,8 @@ class DependencyContainer:
             lambda: MainViewModel(
                 config_repository=self.get('config_repository'),
                 file_monitor_service=self.get('file_monitor_service'),
-                process_file_use_case=self.get('process_file_use_case')
+                process_file_use_case=self.get('process_file_use_case'),
+                log_repository=self.get('log_repository')
             )
         )
     

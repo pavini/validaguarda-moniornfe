@@ -327,6 +327,7 @@ class MainWindow(QMainWindow):
         self.view_model.status_updated.connect(self.on_status_updated)
         self.view_model.validation_result_added.connect(self.on_validation_result_added)
         self.view_model.configuration_changed.connect(self.on_configuration_changed)
+        self.view_model.processing_progress.connect(self.on_processing_progress)
     
     def apply_modern_styling(self):
         """Apply modern styling with orange theme"""
@@ -768,6 +769,16 @@ class MainWindow(QMainWindow):
     def on_configuration_changed(self):
         """Handle configuration changed signal"""
         self.update_ui_state()
+    
+    def on_processing_progress(self, session_id: str, processed: int, total: int):
+        """Handle parallel processing progress updates"""
+        progress_msg = f"📊 Processamento paralelo ({session_id[:6]}): {processed}/{total} arquivo(s)"
+        self.add_log_entry(progress_msg)
+        
+        # Update status bar with progress
+        if total > 0:
+            progress_pct = (processed / total) * 100
+            self.status_bar.showMessage(f"Processando... {progress_pct:.0f}% ({processed}/{total})")
     
     def add_log_entry(self, message: str):
         """Add entry to log area"""

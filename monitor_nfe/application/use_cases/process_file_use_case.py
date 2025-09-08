@@ -39,6 +39,8 @@ class ProcessFileUseCase:
         self._config_repository = config_repository
         self._log_repository = log_repository
         self._result_callback = None
+        self._active_processing_files = set()  # Track files currently being processed
+        self._processing_lock = None
     
     def set_result_callback(self, callback):
         """Set callback function to be called when each result is ready"""
@@ -83,24 +85,40 @@ class ProcessFileUseCase:
             validation_results = []
             
             for xml_file in xml_files:
-                nfe_document = NFEDocument(file_path=xml_file)
-                
-                validate_request = ValidateNFeUseCaseRequest(
-                    document=nfe_document,
-                    validate_schema=request.validate_schema,
-                    send_to_api=request.send_to_api
-                )
-                
-                validate_response = self._validate_nfe_use_case.execute(validate_request)
-                validation_results.append(validate_response.validation_result)
-                
-                # Call callback immediately if available (for real-time UI updates)
-                if self._result_callback:
-                    self._result_callback(validate_response.validation_result)
-                
-                # Organize file if requested
-                if request.organize_output:
-                    self._organize_processed_file(xml_file, validate_response.validation_result)
+                try:
+                    # Mark file as actively being processed
+                    self._active_processing_files.add(str(xml_file))
+                    
+                    # Debug: Check if file exists before processing
+                    if not xml_file.exists():
+                        self._log_repository.log_error(f"❌ Arquivo não existe no momento da validação: {xml_file}")
+                        self._log_repository.log_error(f"   Caminho: {xml_file.absolute()}")
+                        continue
+                    
+                    self._log_repository.log_debug(f"✓ Iniciando validação: {xml_file.name} (tamanho: {xml_file.stat().st_size} bytes)")
+                    
+                    nfe_document = NFEDocument(file_path=xml_file)
+                    
+                    validate_request = ValidateNFeUseCaseRequest(
+                        document=nfe_document,
+                        validate_schema=request.validate_schema,
+                        send_to_api=request.send_to_api
+                    )
+                    
+                    validate_response = self._validate_nfe_use_case.execute(validate_request)
+                    validation_results.append(validate_response.validation_result)
+                    
+                    # Call callback immediately if available (for real-time UI updates)
+                    if self._result_callback:
+                        self._result_callback(validate_response.validation_result)
+                    
+                    # Organize file if requested
+                    if request.organize_output:
+                        self._organize_processed_file(xml_file, validate_response.validation_result)
+                        
+                finally:
+                    # Mark file as no longer being processed
+                    self._active_processing_files.discard(str(xml_file))
             
             # Calculate total processing time
             end_time = time.time()
@@ -204,9 +222,15 @@ class ProcessFileUseCase:
                         # Copy file to permanent location
                         import shutil
                         shutil.copy2(extracted_file, permanent_path)
-                        xml_files.append(permanent_path)
                         
-                        self._log_repository.log_debug(f"XML copiado para: {permanent_path}")
+                        # Verify copy was successful
+                        if permanent_path.exists():
+                            file_size = permanent_path.stat().st_size
+                            xml_files.append(permanent_path)
+                            self._log_repository.log_debug(f"✅ XML copiado: {permanent_path.name} ({file_size} bytes)")
+                        else:
+                            self._log_repository.log_error(f"❌ Falha ao copiar XML: {permanent_path}")
+                            continue
                 
                 self._log_repository.log_info(f"Arquivos XML encontrados no arquivo: {len(xml_files)}")
                 
@@ -250,22 +274,36 @@ class ProcessFileUseCase:
     def _cleanup_temp_xml_files(self):
         """Clean up temporary XML files created during archive extraction"""
         if hasattr(self, '_temp_xml_files'):
+            files_to_keep = []
+            
             for xml_file in self._temp_xml_files:
                 try:
-                    if xml_file.exists():
-                        xml_file.unlink()
-                        self._log_repository.log_debug(f"Arquivo temporário removido: {xml_file.name}")
+                    # Only cleanup files that are NOT currently being processed
+                    if str(xml_file) not in self._active_processing_files:
+                        if xml_file.exists():
+                            xml_file.unlink()
+                            self._log_repository.log_debug(f"✅ Arquivo temporário removido: {xml_file.name}")
+                    else:
+                        # Keep file for later cleanup (it's still being processed)
+                        files_to_keep.append(xml_file)
+                        self._log_repository.log_debug(f"⏳ Mantendo arquivo em processamento: {xml_file.name}")
+                        
                 except Exception as e:
                     self._log_repository.log_warning(f"Erro ao remover arquivo temporário {xml_file.name}: {e}")
+                    files_to_keep.append(xml_file)  # Keep it for retry later
             
-            # Clean up temp directory if empty
-            try:
-                if self._temp_xml_files:
-                    temp_xml_dir = self._temp_xml_files[0].parent
-                    if temp_xml_dir.exists() and not any(temp_xml_dir.iterdir()):
-                        temp_xml_dir.rmdir()
-                        self._log_repository.log_debug(f"Diretório temporário removido: {temp_xml_dir}")
-            except Exception as e:
-                self._log_repository.log_debug(f"Erro ao remover diretório temporário: {e}")
+            # Update the list with files that still need cleanup
+            self._temp_xml_files = files_to_keep
             
-            self._temp_xml_files = []
+            # Clean up temp directory if empty (only if no files were kept)
+            if not files_to_keep:
+                try:
+                    if hasattr(self, '_temp_xml_files') and len(self._temp_xml_files) > 0:
+                        temp_xml_dir = self._temp_xml_files[0].parent
+                        if temp_xml_dir.exists() and not any(temp_xml_dir.iterdir()):
+                            temp_xml_dir.rmdir()
+                            self._log_repository.log_debug(f"📁 Diretório temporário removido: {temp_xml_dir}")
+                except Exception as e:
+                    self._log_repository.log_debug(f"Erro ao remover diretório temporário: {e}")
+            else:
+                self._log_repository.log_debug(f"⏳ Mantendo diretório temporário - {len(files_to_keep)} arquivo(s) ainda em processamento")

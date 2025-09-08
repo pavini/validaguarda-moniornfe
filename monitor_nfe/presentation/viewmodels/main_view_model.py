@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Callable
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QMetaObject, Qt, Slot
 from PySide6.QtWidgets import QApplication
 
 from application.dtos.file_processing_dto import MonitoringStatus
@@ -10,6 +10,7 @@ from application.interfaces.repositories import IConfigurationRepository
 from application.interfaces.services import IFileMonitorService
 from domain.entities.configuration import Configuration
 from domain.entities.validation_result import ValidationResult
+from infrastructure.services.parallel_processing_service import ParallelProcessingService
 
 
 class MainViewModel(QObject):
@@ -22,12 +23,14 @@ class MainViewModel(QObject):
     status_updated = Signal(str)  # status message
     configuration_changed = Signal()
     validation_result_added = Signal(object)  # ValidationResult
+    processing_progress = Signal(str, int, int)  # session_id, processed, total
     
     def __init__(
         self,
         config_repository: IConfigurationRepository,
         file_monitor_service: IFileMonitorService,
-        process_file_use_case: ProcessFileUseCase
+        process_file_use_case: ProcessFileUseCase,
+        log_repository = None
     ):
         super().__init__()
         
@@ -35,13 +38,75 @@ class MainViewModel(QObject):
         self._file_monitor_service = file_monitor_service
         self._process_file_use_case = process_file_use_case
         
+        # Create parallel processing service
+        if log_repository:
+            self._parallel_service = ParallelProcessingService(
+                process_file_use_case=process_file_use_case,
+                log_repository=log_repository,
+                max_threads=10
+            )
+            self._setup_parallel_callbacks()
+        else:
+            self._parallel_service = None
+        
         # State
         self._configuration: Configuration = Configuration()
         self._monitoring_status = MonitoringStatus(is_active=False)
         self._validation_results: List[ValidationResult] = []
+        self._current_processing_session: Optional[str] = None
         
         # Load initial configuration
         self.load_configuration()
+    
+    def _setup_parallel_callbacks(self):
+        """Setup thread-safe callbacks for parallel processing"""
+        if not self._parallel_service:
+            return
+            
+        # Progress callback - thread-safe signal emission
+        def on_progress(session_id: str, processed: int, total: int):
+            # Use Qt's thread-safe signal emission
+            QMetaObject.invokeMethod(
+                self,
+                "_emit_progress_signal",
+                Qt.ConnectionType.QueuedConnection,
+                QMetaObject.Q_ARG(str, session_id),
+                QMetaObject.Q_ARG(int, processed),
+                QMetaObject.Q_ARG(int, total)
+            )
+        
+        # Result callback - thread-safe signal emission  
+        def on_result(result: ValidationResult, thread_id: str):
+            # Use Qt's thread-safe signal emission
+            QMetaObject.invokeMethod(
+                self,
+                "_emit_result_signal",
+                Qt.ConnectionType.QueuedConnection,
+                QMetaObject.Q_ARG(object, result),
+                QMetaObject.Q_ARG(str, thread_id)
+            )
+        
+        self._parallel_service.set_progress_callback(on_progress)
+        self._parallel_service.set_result_callback(on_result)
+    
+    @Slot(str, int, int)
+    def _emit_progress_signal(self, session_id: str, processed: int, total: int):
+        """Thread-safe method to emit progress signal"""
+        self.processing_progress.emit(session_id, processed, total)
+        self.status_updated.emit(f"📊 Processamento: {processed}/{total} arquivo(s)")
+    
+    @Slot(object, str)
+    def _emit_result_signal(self, result: ValidationResult, thread_id: str):
+        """Thread-safe method to emit result signal"""
+        self._validation_results.append(result)
+        self.validation_result_added.emit(result)
+        
+        # Update statistics
+        self._monitoring_status.files_processed += 1
+        if result.is_valid:
+            self._monitoring_status.files_successful += 1
+        else:
+            self._monitoring_status.files_failed += 1
     
     # Properties
     @property
@@ -139,6 +204,11 @@ class MainViewModel(QObject):
         """Stop file monitoring"""
         try:
             self._file_monitor_service.stop_monitoring()
+            
+            # Stop parallel processing if active
+            if self._parallel_service:
+                self._parallel_service.stop_all_processing()
+                self._current_processing_session = None
             
             # Update status
             self._monitoring_status = MonitoringStatus(is_active=False)
@@ -285,40 +355,69 @@ class MainViewModel(QObject):
             scan_directory(monitor_path)
             
             if files_found:
-                self.status_updated.emit(f"📁 {len(files_found)} arquivo(s) encontrado(s) - iniciando processamento...")
+                self.status_updated.emit(f"📁 {len(files_found)} arquivo(s) encontrado(s) - iniciando processamento paralelo...")
                 
-                # Process each file found - with real-time UI updates
-                for i, file_path in enumerate(files_found, 1):
-                    if self._monitoring_status.is_active:  # Check if still monitoring
-                        try:
-                            # Show progress immediately
-                            progress_msg = f"📄 [{i}/{len(files_found)}] Processando: {file_path.name}"
-                            self.status_updated.emit(progress_msg)
-                            
-                            # Force immediate UI update
-                            QApplication.processEvents()
-                            
-                            # Process the file (now with real-time callback support)
-                            success = self.process_file_manually(file_path)
-                            
-                            # Show completion status immediately
-                            if success:
-                                self.status_updated.emit(f"✅ [{i}/{len(files_found)}] Concluído: {file_path.name}")
-                            else:
-                                self.status_updated.emit(f"❌ [{i}/{len(files_found)}] Falhou: {file_path.name}")
-                            
-                            # Force UI update after completion
-                            QApplication.processEvents()
-                            
-                        except Exception as e:
-                            self.status_updated.emit(f"❌ [{i}/{len(files_found)}] Erro: {file_path.name} - {e}")
-                            QApplication.processEvents()
-                    else:
-                        break  # Stop if monitoring was stopped
-                
-                self.status_updated.emit(f"✅ Varredura inicial concluída - {len(files_found)} arquivo(s) processado(s)")
+                # Use parallel processing if available
+                if self._parallel_service and len(files_found) > 3:  # Use parallel for 4+ files
+                    self._start_parallel_processing(files_found)
+                else:
+                    # Fallback to sequential processing for small batches
+                    self._process_files_sequentially(files_found)
+                    
             else:
                 self.status_updated.emit("📁 Nenhum arquivo encontrado na pasta de monitoramento")
                 
         except Exception as e:
             self.status_updated.emit(f"❌ Erro na varredura inicial: {e}")
+    
+    def _start_parallel_processing(self, files_found: List[Path]):
+        """Start parallel processing of found files"""
+        try:
+            self.status_updated.emit(f"🚀 Iniciando processamento paralelo de {len(files_found)} arquivo(s) (máximo 10 threads)")
+            
+            session_id = self._parallel_service.start_parallel_processing(
+                file_paths=files_found,
+                process_archives=True,
+                validate_schema=True,
+                send_to_api=True,
+                organize_output=self._configuration.auto_organize
+            )
+            
+            self._current_processing_session = session_id
+            
+        except Exception as e:
+            self.status_updated.emit(f"❌ Erro no processamento paralelo: {e}")
+            # Fallback to sequential
+            self._process_files_sequentially(files_found)
+    
+    def _process_files_sequentially(self, files_found: List[Path]):
+        """Process files sequentially (fallback method)"""
+        for i, file_path in enumerate(files_found, 1):
+            if self._monitoring_status.is_active:  # Check if still monitoring
+                try:
+                    # Show progress immediately
+                    progress_msg = f"📄 [{i}/{len(files_found)}] Processando: {file_path.name}"
+                    self.status_updated.emit(progress_msg)
+                    
+                    # Force immediate UI update
+                    QApplication.processEvents()
+                    
+                    # Process the file
+                    success = self.process_file_manually(file_path)
+                    
+                    # Show completion status immediately
+                    if success:
+                        self.status_updated.emit(f"✅ [{i}/{len(files_found)}] Concluído: {file_path.name}")
+                    else:
+                        self.status_updated.emit(f"❌ [{i}/{len(files_found)}] Falhou: {file_path.name}")
+                    
+                    # Force UI update after completion
+                    QApplication.processEvents()
+                    
+                except Exception as e:
+                    self.status_updated.emit(f"❌ [{i}/{len(files_found)}] Erro: {file_path.name} - {e}")
+                    QApplication.processEvents()
+            else:
+                break  # Stop if monitoring was stopped
+        
+        self.status_updated.emit(f"✅ Varredura inicial concluída - {len(files_found)} arquivo(s) processado(s)")
