@@ -123,13 +123,15 @@ class NFEValidationService(INFEValidationService):
         # For XML files, check basic structure
         if document.is_xml:
             try:
-                # Try to read file content
-                encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
+                # Try to read file content with improved encoding detection
+                encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'iso-8859-1', 'cp1252', 'windows-1252']
                 xml_content = None
+                used_encoding = None
                 
                 for encoding in encodings:
                     try:
                         xml_content = document.file_path.read_text(encoding=encoding)
+                        used_encoding = encoding
                         break
                     except UnicodeDecodeError:
                         continue
@@ -142,9 +144,9 @@ class NFEValidationService(INFEValidationService):
                     )
                     return result
                 
-                # Check for XML declaration
-                xml_stripped = xml_content.strip()
-                if not xml_stripped.startswith('<?xml'):
+                # Check for XML declaration (improved detection)
+                xml_content_clean = self._clean_xml_content(xml_content)
+                if not self._has_xml_declaration(xml_content_clean):
                     result.add_error(
                         ValidationType.STRUCTURE,
                         "Declaração XML ausente",
@@ -195,3 +197,45 @@ class NFEValidationService(INFEValidationService):
         )
         
         return result
+    
+    def _clean_xml_content(self, xml_content: str) -> str:
+        """Clean XML content by removing BOM and invisible characters"""
+        # Remove BOM (Byte Order Mark)
+        if xml_content.startswith('\ufeff'):
+            xml_content = xml_content[1:]
+        
+        # Remove other common invisible characters at the beginning
+        xml_content = xml_content.lstrip('\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0c\x0e\x0f')
+        xml_content = xml_content.lstrip('\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f')
+        
+        return xml_content.strip()
+    
+    def _has_xml_declaration(self, xml_content: str) -> bool:
+        """Check if XML has valid declaration using multiple methods"""
+        if not xml_content:
+            return False
+        
+        # Method 1: Direct string check (most common case)
+        if xml_content.startswith('<?xml'):
+            return True
+        
+        # Method 2: Check first 100 characters for declaration
+        first_part = xml_content[:100].lower()
+        if '<?xml' in first_part:
+            return True
+        
+        # Method 3: Try to parse with XML parser (most reliable)
+        try:
+            import xml.etree.ElementTree as ET
+            # Try to parse - if it succeeds, it's valid XML
+            ET.fromstring(xml_content)
+            return True
+        except ET.ParseError:
+            # If parsing fails, it might still be valid XML but with issues
+            # Check if it contains NFe elements
+            if any(tag in xml_content for tag in ['<NFe', '<nfeProc', '<infNFe']):
+                return True
+        except Exception:
+            pass
+        
+        return False
