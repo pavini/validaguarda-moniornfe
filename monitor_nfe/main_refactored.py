@@ -765,6 +765,34 @@ class MainWindow(QMainWindow):
         
         # Add detailed log entry with error information
         self._add_detailed_validation_log(result)
+        
+        # Update statistics cards in real-time
+        self.update_statistics_realtime()
+    
+    def update_statistics_realtime(self):
+        """Update statistics cards in real-time as files are processed"""
+        try:
+            # Get current summary from view model
+            summary = self.view_model.get_result_summary()
+            
+            # Update each card directly
+            self.total_card.value_label.setText(str(summary['total']))
+            self.success_card.value_label.setText(str(summary['successful']))
+            self.error_card.value_label.setText(str(summary['failed']))
+            self.rate_card.value_label.setText(f"{summary['success_rate']:.1f}%")
+            
+            # Force immediate repaint of the statistics area
+            self.total_card.repaint()
+            self.success_card.repaint()
+            self.error_card.repaint()
+            self.rate_card.repaint()
+            
+            # Also update with QApplication.processEvents to ensure immediate UI update
+            QApplication.processEvents()
+            
+        except Exception as e:
+            # Silently ignore errors in statistics updates to avoid spam
+            pass
     
     def on_configuration_changed(self):
         """Handle configuration changed signal"""
@@ -778,7 +806,10 @@ class MainWindow(QMainWindow):
         # Update status bar with progress
         if total > 0:
             progress_pct = (processed / total) * 100
-            self.status_bar.showMessage(f"Processando... {progress_pct:.0f}% ({processed}/{total})")
+            self.statusBar().showMessage(f"Processando... {progress_pct:.0f}% ({processed}/{total})")
+        
+        # Also update statistics cards on progress updates
+        self.update_statistics_realtime()
     
     def add_log_entry(self, message: str):
         """Add entry to log area"""

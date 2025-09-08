@@ -65,14 +65,12 @@ class MainViewModel(QObject):
             
         # Progress callback - direct signal emission (Qt signals are thread-safe)
         def on_progress(session_id: str, processed: int, total: int):
-            print(f"🔧 DEBUG: Progress callback chamado: {processed}/{total}")  # Debug
             # Qt signals are automatically thread-safe
             self.processing_progress.emit(session_id, processed, total)
             self.status_updated.emit(f"📊 Paralelo ({session_id[:6]}): {processed}/{total} arquivo(s)")
         
         # Result callback - direct signal emission
         def on_result(result: ValidationResult, thread_id: str):
-            print(f"🔧 DEBUG: Result callback chamado para: {result.document_path}")  # Debug
             # Add result to list in thread-safe way
             self._validation_results.append(result)
             

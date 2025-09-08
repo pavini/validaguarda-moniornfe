@@ -133,6 +133,14 @@ class ProcessFileUseCase:
                 f"{len([r for r in validation_results if r.is_valid])} sucesso(s)"
             )
             
+            # Handle archive organization - ZIP always goes to processed
+            if request.organize_output and processing_request.is_archive:
+                archive_success = self._organize_archive_simple(
+                    request.file_path, validation_results
+                )
+                if archive_success:
+                    self._log_repository.log_info(f"📁 ZIP movido para 'processed': {request.file_path.name}")
+            
             # Clean up temporary XML files
             self._cleanup_temp_xml_files()
             
@@ -307,3 +315,114 @@ class ProcessFileUseCase:
                     self._log_repository.log_debug(f"Erro ao remover diretório temporário: {e}")
             else:
                 self._log_repository.log_debug(f"⏳ Mantendo diretório temporário - {len(files_to_keep)} arquivo(s) ainda em processamento")
+    
+    def _organize_archive_simple(self, archive_path: Path, validation_results: List) -> bool:
+        """Simple archive organization - ZIP always goes to processed, XMLs organized individually"""
+        try:
+            config = self._config_repository.load_configuration()
+            if not config.output_path:
+                return False
+            
+            output_path = Path(config.output_path)
+            
+            # ZIP sempre vai para processed/
+            processed_dir = output_path / "processed"
+            processed_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Generate unique filename for ZIP
+            zip_target = self._get_unique_archive_path(processed_dir, archive_path)
+            
+            # Move ZIP to processed
+            import shutil
+            shutil.move(str(archive_path), str(zip_target))
+            
+            # Create simple processing summary
+            self._create_simple_archive_report(zip_target, validation_results, output_path)
+            
+            total_files = len(validation_results)
+            successful_files = len([r for r in validation_results if r.is_valid])
+            
+            self._log_repository.log_info(
+                f"📦 ZIP processado: {archive_path.name} → processed/ "
+                f"(✅ {successful_files}/{total_files} XMLs sucessos)"
+            )
+            
+            return True
+            
+        except Exception as e:
+            self._log_repository.log_error(f"Erro ao organizar arquivo ZIP: {e}")
+            return False
+    
+    def _get_unique_archive_path(self, target_dir: Path, original_path: Path) -> Path:
+        """Generate unique path for archive to avoid overwrites"""
+        base_name = original_path.stem
+        extension = original_path.suffix
+        target_path = target_dir / original_path.name
+        
+        if not target_path.exists():
+            return target_path
+        
+        # Add timestamp if file exists
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        counter = 1
+        
+        while True:
+            unique_name = f"{base_name}_{timestamp}_{counter:03d}{extension}"
+            unique_path = target_dir / unique_name
+            
+            if not unique_path.exists():
+                return unique_path
+            
+            counter += 1
+            if counter > 999:  # Safety check
+                break
+        
+        return target_path
+    
+    def _create_simple_archive_report(self, archive_path: Path, validation_results: List, output_path: Path):
+        """Create simple processing summary for archive"""
+        try:
+            logs_folder = output_path / "logs"
+            logs_folder.mkdir(parents=True, exist_ok=True)
+            
+            report_name = f"{archive_path.stem}_summary.txt"
+            report_path = logs_folder / report_name
+            
+            # Simple summary content
+            from datetime import datetime
+            successful = len([r for r in validation_results if r.is_valid])
+            failed = len(validation_results) - successful
+            
+            lines = [
+                f"RESUMO DE PROCESSAMENTO - {archive_path.name}",
+                f"=" * 50,
+                f"Processado em: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                f"ZIP movido para: processed/",
+                "",
+                f"ESTATÍSTICAS:",
+                f"- Total XMLs: {len(validation_results)}",
+                f"- Sucessos: {successful}",
+                f"- Falhas: {failed}",
+                "",
+                f"OBSERVAÇÃO:",
+                f"- XMLs com sucesso foram organizados em suas respectivas pastas",
+                f"- XMLs com erro foram movidos para pasta de erros",
+                f"- ZIP sempre é movido para 'processed/' independente dos resultados",
+                "",
+                f"DETALHES POR ARQUIVO:",
+                f"=" * 30,
+            ]
+            
+            # Add simple file list
+            for i, result in enumerate(validation_results, 1):
+                filename = result.document_path.split('/')[-1] if '/' in result.document_path else result.document_path
+                status = "✅ SUCESSO" if result.is_valid else "❌ FALHA"
+                lines.append(f"{i:2d}. {status} - {filename}")
+            
+            # Write summary
+            with open(report_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(lines))
+                
+        except Exception as e:
+            self._log_repository.log_error(f"Erro ao criar resumo de ZIP: {e}")
