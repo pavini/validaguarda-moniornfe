@@ -48,25 +48,48 @@ echo.
 echo ⚠️  Se der erro de 'ThreadHandle', feche e execute novamente
 echo.
 
-REM Criar wrapper para corrigir threading no Windows
-echo import os > windows_wrapper.py
-echo import sys >> windows_wrapper.py
-echo import multiprocessing >> windows_wrapper.py
-echo if __name__ == '__main__': >> windows_wrapper.py
-echo     # Fix para Windows threading >> windows_wrapper.py
-echo     if sys.platform.startswith('win'): >> windows_wrapper.py
-echo         try: >> windows_wrapper.py
-echo             multiprocessing.set_start_method('spawn', force=True) >> windows_wrapper.py
-echo         except RuntimeError: >> windows_wrapper.py
-echo             pass >> windows_wrapper.py
-echo     # Executar aplicação >> windows_wrapper.py
-echo     exec(open('main_refactored.py', encoding='utf-8').read()) >> windows_wrapper.py
+REM Criar patch avançado para corrigir threading no Windows
+echo import os > windows_patch.py
+echo import sys >> windows_patch.py
+echo import multiprocessing >> windows_patch.py
+echo import threading >> windows_patch.py
+echo from concurrent.futures import ThreadPoolExecutor >> windows_patch.py
+echo. >> windows_patch.py
+echo # Monkey patch para corrigir ThreadHandle no Windows >> windows_patch.py
+echo if sys.platform.startswith('win'^): >> windows_patch.py
+echo     # Fix multiprocessing >> windows_patch.py
+echo     try: >> windows_patch.py
+echo         multiprocessing.set_start_method('spawn', force=True'^) >> windows_patch.py
+echo     except RuntimeError: >> windows_patch.py
+echo         pass >> windows_patch.py
+echo     # Override problemático ThreadPoolExecutor >> windows_patch.py
+echo     original_submit = ThreadPoolExecutor.submit >> windows_patch.py
+echo     def patched_submit(self, fn, *args, **kwargs'^): >> windows_patch.py
+echo         try: >> windows_patch.py
+echo             return original_submit(self, fn, *args, **kwargs'^) >> windows_patch.py
+echo         except Exception as e: >> windows_patch.py
+echo             if "'handle' must be a _ThreadHandle" in str(e'^): >> windows_patch.py
+echo                 # Fallback: execução síncrona >> windows_patch.py
+echo                 import concurrent.futures >> windows_patch.py
+echo                 future = concurrent.futures.Future('^) >> windows_patch.py
+echo                 try: >> windows_patch.py
+echo                     result = fn(*args, **kwargs'^) >> windows_patch.py
+echo                     future.set_result(result'^) >> windows_patch.py
+echo                 except Exception as ex: >> windows_patch.py
+echo                     future.set_exception(ex'^) >> windows_patch.py
+echo                 return future >> windows_patch.py
+echo             else: >> windows_patch.py
+echo                 raise >> windows_patch.py
+echo     ThreadPoolExecutor.submit = patched_submit >> windows_patch.py
+echo. >> windows_patch.py
+echo # Executar aplicação com patches aplicados >> windows_patch.py
+echo exec(open('main_refactored.py', encoding='utf-8'^).read('^)^) >> windows_patch.py
 
-echo 🎯 Executando main_refactored.py com correções Windows...
-python windows_wrapper.py
+echo 🎯 Executando main_refactored.py com patch avançado Windows...
+python windows_patch.py
 
-REM Limpar wrapper temporário
-del windows_wrapper.py 2>nul
+REM Limpar patch temporário
+del windows_patch.py 2>nul
 
 cd ..
 echo.
