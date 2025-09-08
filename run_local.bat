@@ -47,15 +47,20 @@ echo.
 echo ⚠️  Se der erro de 'ThreadHandle', feche e execute novamente
 echo.
 
-REM Executar aplicação com multiprocessing fix
-python -c "
-import multiprocessing
-if __name__ == '__main__':
-    multiprocessing.set_start_method('spawn', force=True)
-    import sys
-    sys.path.insert(0, '.')
-    exec(open('main_refactored.py').read())
-"
+REM Criar script temporário para fix de threading
+echo import multiprocessing > temp_fix.py
+echo if __name__ == '__main__': >> temp_fix.py
+echo     try: >> temp_fix.py
+echo         multiprocessing.set_start_method('spawn', force=True) >> temp_fix.py
+echo     except: >> temp_fix.py
+echo         pass >> temp_fix.py
+echo     exec(open('main_refactored.py').read()) >> temp_fix.py
+
+REM Executar com fix
+python temp_fix.py
+
+REM Limpar arquivo temporário
+del temp_fix.py 2>nul
 
 cd ..
 echo.
