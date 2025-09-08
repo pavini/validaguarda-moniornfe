@@ -49,7 +49,7 @@ echo ⚠️  Se der erro de 'ThreadHandle', feche e execute novamente
 echo.
 
 echo 🎯 Executando main_refactored.py (modo compatibilidade Windows)...
-python -c "import os; os.environ['PYTHONUTF8']='1'; exec(open('main_refactored.py', encoding='utf-8').read())"
+python main_refactored.py
 
 cd ..
 echo.
