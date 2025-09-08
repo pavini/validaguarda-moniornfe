@@ -72,6 +72,14 @@ class ProcessFileUseCase:
                 
                 self._log_repository.log_warning(f"Nenhum arquivo XML encontrado para processar: {request.file_path.name}")
                 
+                # Still move archive to processed if it's a ZIP (even if empty)
+                if request.organize_output and processing_request.is_archive:
+                    archive_success = self._organize_archive_simple(
+                        request.file_path, []  # Empty validation results
+                    )
+                    if archive_success:
+                        self._log_repository.log_info(f"📁 ZIP vazio movido para 'processed': {request.file_path.name}")
+                
                 return FileProcessingResponse(
                     request=processing_request,
                     results=[],
