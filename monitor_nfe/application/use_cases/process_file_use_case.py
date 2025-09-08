@@ -106,6 +106,9 @@ class ProcessFileUseCase:
                 f"{len([r for r in validation_results if r.is_valid])} sucesso(s)"
             )
             
+            # Clean up temporary XML files
+            self._cleanup_temp_xml_files()
+            
             return FileProcessingResponse(
                 request=processing_request,
                 results=validation_results,
@@ -120,6 +123,9 @@ class ProcessFileUseCase:
             processing_time_ms = (end_time - start_time) * 1000
             
             self._log_repository.log_error(f"Erro durante processamento: {request.file_path.name}", e)
+            
+            # Clean up temporary XML files even on error
+            self._cleanup_temp_xml_files()
             
             return FileProcessingResponse(
                 request=processing_request,
@@ -142,23 +148,9 @@ class ProcessFileUseCase:
                     self._log_repository.log_debug(f"Arquivo XML encontrado: {request.filename}")
                 
             elif request.is_archive and request.process_archives:
-                # Extract archive and find XML files
+                # Extract archive and copy XML files to permanent location
                 if self._archive_service.can_extract(request.file_path):
-                    # Create temporary extraction directory
-                    import tempfile
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        temp_path = Path(temp_dir)
-                        
-                        self._log_repository.log_info(f"Extraindo arquivo: {request.filename}")
-                        extracted_files = self._archive_service.extract_archive(request.file_path, temp_path)
-                        
-                        # Find XML files in extracted content
-                        for extracted_file in extracted_files:
-                            if extracted_file.suffix.lower() == '.xml':
-                                # Copy to a permanent location or process immediately
-                                xml_files.append(extracted_file)
-                        
-                        self._log_repository.log_info(f"Arquivos XML encontrados no arquivo: {len(xml_files)}")
+                    xml_files = self._extract_and_copy_xml_files(request.file_path)
                 else:
                     self._log_repository.log_warning(f"Formato de arquivo não suportado: {request.filename}")
             else:
@@ -166,6 +158,65 @@ class ProcessFileUseCase:
                 
         except Exception as e:
             self._log_repository.log_error(f"Erro ao obter arquivos XML: {request.filename}", e)
+        
+        return xml_files
+    
+    def _extract_and_copy_xml_files(self, archive_path: Path) -> List[Path]:
+        """Extract archive and copy XML files to permanent location"""
+        xml_files = []
+        
+        try:
+            # Create temporary extraction directory
+            import tempfile
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+                
+                self._log_repository.log_info(f"Extraindo arquivo: {archive_path.name}")
+                extracted_files = self._archive_service.extract_archive(archive_path, temp_path)
+                
+                # Get output directory from configuration
+                config = self._config_repository.load_configuration()
+                if not config.output_path:
+                    raise ValueError("Pasta de saída não configurada")
+                
+                output_path = Path(config.output_path)
+                temp_xml_dir = output_path / "temp_xml"
+                temp_xml_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Find and copy XML files to permanent location
+                for extracted_file in extracted_files:
+                    if extracted_file.suffix.lower() == '.xml':
+                        # Create unique filename to avoid conflicts
+                        import uuid
+                        unique_prefix = str(uuid.uuid4())[:8]
+                        permanent_filename = f"{unique_prefix}_{extracted_file.name}"
+                        permanent_path = temp_xml_dir / permanent_filename
+                        
+                        # Copy file to permanent location
+                        import shutil
+                        shutil.copy2(extracted_file, permanent_path)
+                        xml_files.append(permanent_path)
+                        
+                        self._log_repository.log_debug(f"XML copiado para: {permanent_path}")
+                
+                self._log_repository.log_info(f"Arquivos XML encontrados no arquivo: {len(xml_files)}")
+                
+                # Store extracted file paths for cleanup later
+                if hasattr(self, '_temp_xml_files'):
+                    self._temp_xml_files.extend(xml_files)
+                else:
+                    self._temp_xml_files = xml_files.copy()
+                    
+        except Exception as e:
+            self._log_repository.log_error(f"Erro ao extrair arquivos XML de: {archive_path.name}", e)
+            # Clean up any partial files
+            for xml_file in xml_files:
+                try:
+                    if xml_file.exists():
+                        xml_file.unlink()
+                except:
+                    pass
+            xml_files = []
         
         return xml_files
     
@@ -186,3 +237,26 @@ class ProcessFileUseCase:
                     
         except Exception as e:
             self._log_repository.log_error(f"Erro ao organizar arquivo: {file_path.name}", e)
+    
+    def _cleanup_temp_xml_files(self):
+        """Clean up temporary XML files created during archive extraction"""
+        if hasattr(self, '_temp_xml_files'):
+            for xml_file in self._temp_xml_files:
+                try:
+                    if xml_file.exists():
+                        xml_file.unlink()
+                        self._log_repository.log_debug(f"Arquivo temporário removido: {xml_file.name}")
+                except Exception as e:
+                    self._log_repository.log_warning(f"Erro ao remover arquivo temporário {xml_file.name}: {e}")
+            
+            # Clean up temp directory if empty
+            try:
+                if self._temp_xml_files:
+                    temp_xml_dir = self._temp_xml_files[0].parent
+                    if temp_xml_dir.exists() and not any(temp_xml_dir.iterdir()):
+                        temp_xml_dir.rmdir()
+                        self._log_repository.log_debug(f"Diretório temporário removido: {temp_xml_dir}")
+            except Exception as e:
+                self._log_repository.log_debug(f"Erro ao remover diretório temporário: {e}")
+            
+            self._temp_xml_files = []

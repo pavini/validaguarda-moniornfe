@@ -836,7 +836,24 @@ class MainWindow(QMainWindow):
             elif error.error_type.value == 'schema':
                 return "📋 Erro schema", "red"
             elif error.error_type.value == 'structure':
-                return "🏗️ Estrutura", "red"
+                # Show specific structure error message
+                error_msg = error.message.lower()
+                if "não encontrado" in error_msg:
+                    return "📄 Arquivo não encontrado", "red"
+                elif "muito pequeno" in error_msg:
+                    return "📏 Arquivo pequeno", "red"
+                elif "muito grande" in error_msg:
+                    return "📏 Arquivo grande", "red"
+                elif "encoding" in error_msg:
+                    return "🔤 Erro encoding", "red"
+                elif "declaração xml" in error_msg:
+                    return "📋 XML inválido", "red"
+                elif "conteúdo nfe" in error_msg:
+                    return "📄 Não é NFe", "red"
+                elif "chave nfe" in error_msg:
+                    return "🔑 Chave ausente", "red"
+                else:
+                    return "🏗️ Erro estrutura", "red"
         
         # Default for other error types
         return "❌ Inválido", "red"
