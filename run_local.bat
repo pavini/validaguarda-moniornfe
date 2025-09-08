@@ -24,6 +24,12 @@ if not exist "monitor_nfe\main_refactored.py" (
 
 echo ✅ Verificações OK
 
+REM Atualizar código do repositório
+echo 🔄 Atualizando código...
+git pull origin main 2>nul || (
+    echo ⚠️  Git pull falhou - continuando com versão local
+)
+
 REM Configurar ambiente Windows (correção threading avançada)
 set PYTHONIOENCODING=utf-8
 set PYTHONUNBUFFERED=1
