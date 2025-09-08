@@ -15,11 +15,13 @@ python --version >nul 2>&1 || (
 )
 
 REM Verificar estrutura
-if not exist "monitor_nfe\main_refactored.py" (
-    echo ❌ Arquivo main_refactored.py não encontrado!
-    echo 📁 Execute na pasta raiz do projeto
-    pause
-    exit /b 1
+if not exist "monitor_nfe\main.py" (
+    if not exist "monitor_nfe\main_refactored.py" (
+        echo ❌ Nenhum arquivo main encontrado!
+        echo 📁 Execute na pasta raiz do projeto
+        pause
+        exit /b 1
+    )
 )
 
 echo ✅ Verificações OK
@@ -47,22 +49,14 @@ echo.
 echo ⚠️  Se der erro de 'ThreadHandle', feche e execute novamente
 echo.
 
-REM Criar script temporário para fix de threading e encoding
-echo import multiprocessing > temp_fix.py
-echo import sys >> temp_fix.py
-echo if __name__ == '__main__': >> temp_fix.py
-echo     try: >> temp_fix.py
-echo         multiprocessing.set_start_method('spawn', force=True) >> temp_fix.py
-echo     except: >> temp_fix.py
-echo         pass >> temp_fix.py
-echo     with open('main_refactored.py', 'r', encoding='utf-8') as f: >> temp_fix.py
-echo         exec(f.read()) >> temp_fix.py
-
-REM Executar com fix
-python temp_fix.py
-
-REM Limpar arquivo temporário
-del temp_fix.py 2>nul
+REM Tentar main.py primeiro (menos problemas de threading), depois main_refactored.py
+if exist "main.py" (
+    echo 🎯 Usando main.py (versão estável)
+    python main.py
+) else (
+    echo 🎯 Usando main_refactored.py 
+    python main_refactored.py
+)
 
 cd ..
 echo.
