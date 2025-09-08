@@ -38,6 +38,11 @@ class ProcessFileUseCase:
         self._file_organizer_service = file_organizer_service
         self._config_repository = config_repository
         self._log_repository = log_repository
+        self._result_callback = None
+    
+    def set_result_callback(self, callback):
+        """Set callback function to be called when each result is ready"""
+        self._result_callback = callback
     
     def execute(self, request: ProcessFileUseCaseRequest) -> FileProcessingResponse:
         """Execute file processing"""
@@ -88,6 +93,10 @@ class ProcessFileUseCase:
                 
                 validate_response = self._validate_nfe_use_case.execute(validate_request)
                 validation_results.append(validate_response.validation_result)
+                
+                # Call callback immediately if available (for real-time UI updates)
+                if self._result_callback:
+                    self._result_callback(validate_response.validation_result)
                 
                 # Organize file if requested
                 if request.organize_output:

@@ -161,25 +161,43 @@ class MainViewModel(QObject):
                 organize_output=self._configuration.auto_organize
             )
             
-            response = self._process_file_use_case.execute(request)
-            
-            # Update results
-            for result in response.results:
+            # Set up real-time callback for individual results
+            def on_result_ready(result: ValidationResult):
+                """Callback called when each individual result is ready"""
                 self._validation_results.append(result)
                 self.validation_result_added.emit(result)
+                
+                # Update statistics immediately
+                self._monitoring_status.files_processed += 1
+                if result.is_valid:
+                    self._monitoring_status.files_successful += 1
+                else:
+                    self._monitoring_status.files_failed += 1
+                
+                # Force UI update immediately
+                QApplication.processEvents()
             
-            # Update statistics
-            self._update_processing_statistics(response.results)
+            # Add callback to use case if it supports it
+            if hasattr(self._process_file_use_case, 'set_result_callback'):
+                self._process_file_use_case.set_result_callback(on_result_ready)
             
-            # Notify UI
+            response = self._process_file_use_case.execute(request)
+            
+            # If use case doesn't support callbacks, fall back to batch processing
+            if not hasattr(self._process_file_use_case, 'set_result_callback'):
+                for result in response.results:
+                    on_result_ready(result)
+            
+            # Notify UI about file completion
             success = response.success and not response.has_errors
             self.file_processed.emit(file_path.name, success)
             
             if success:
-                self.status_updated.emit(f"Arquivo processado com sucesso: {file_path.name}")
+                self.status_updated.emit(f"✅ Arquivo processado: {file_path.name}")
             else:
                 error_msg = response.error_message or "Falha no processamento"
-                self.status_updated.emit(f"Erro no processamento: {error_msg}")
+                self.status_updated.emit(f"❌ Arquivo processado: {file_path.name}")
+                self.status_updated.emit(f"ℹ️  Erro no processamento: {error_msg}")
             
             return success
             
@@ -222,14 +240,16 @@ class MainViewModel(QObject):
             self.status_updated.emit(f"Erro ao processar arquivo detectado: {e}")
     
     def _update_processing_statistics(self, results: List[ValidationResult]):
-        """Update processing statistics"""
+        """Update processing statistics (only used when callback is not supported)"""
         for result in results:
-            self._monitoring_status.files_processed += 1
-            
-            if result.is_valid:
-                self._monitoring_status.files_successful += 1
-            else:
-                self._monitoring_status.files_failed += 1
+            # Only update if not already updated via callback
+            if not hasattr(self._process_file_use_case, 'set_result_callback'):
+                self._monitoring_status.files_processed += 1
+                
+                if result.is_valid:
+                    self._monitoring_status.files_successful += 1
+                else:
+                    self._monitoring_status.files_failed += 1
     
     # Utility methods
     def get_monitoring_uptime_minutes(self) -> int:
@@ -271,18 +291,27 @@ class MainViewModel(QObject):
                 for i, file_path in enumerate(files_found, 1):
                     if self._monitoring_status.is_active:  # Check if still monitoring
                         try:
-                            self.status_updated.emit(f"📄 [{i}/{len(files_found)}] Processando: {file_path.name}")
+                            # Show progress immediately
+                            progress_msg = f"📄 [{i}/{len(files_found)}] Processando: {file_path.name}"
+                            self.status_updated.emit(progress_msg)
                             
-                            # Force UI update before processing
+                            # Force immediate UI update
                             QApplication.processEvents()
                             
-                            self.process_file_manually(file_path)
+                            # Process the file (now with real-time callback support)
+                            success = self.process_file_manually(file_path)
                             
-                            # Force UI update after processing
+                            # Show completion status immediately
+                            if success:
+                                self.status_updated.emit(f"✅ [{i}/{len(files_found)}] Concluído: {file_path.name}")
+                            else:
+                                self.status_updated.emit(f"❌ [{i}/{len(files_found)}] Falhou: {file_path.name}")
+                            
+                            # Force UI update after completion
                             QApplication.processEvents()
                             
                         except Exception as e:
-                            self.status_updated.emit(f"❌ Erro ao processar {file_path.name}: {e}")
+                            self.status_updated.emit(f"❌ [{i}/{len(files_found)}] Erro: {file_path.name} - {e}")
                             QApplication.processEvents()
                     else:
                         break  # Stop if monitoring was stopped
