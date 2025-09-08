@@ -63,50 +63,37 @@ class MainViewModel(QObject):
         if not self._parallel_service:
             return
             
-        # Progress callback - thread-safe signal emission
+        # Progress callback - direct signal emission (Qt signals are thread-safe)
         def on_progress(session_id: str, processed: int, total: int):
-            # Use Qt's thread-safe signal emission
-            QMetaObject.invokeMethod(
-                self,
-                "_emit_progress_signal",
-                Qt.ConnectionType.QueuedConnection,
-                QMetaObject.Q_ARG(str, session_id),
-                QMetaObject.Q_ARG(int, processed),
-                QMetaObject.Q_ARG(int, total)
-            )
+            print(f"🔧 DEBUG: Progress callback chamado: {processed}/{total}")  # Debug
+            # Qt signals are automatically thread-safe
+            self.processing_progress.emit(session_id, processed, total)
+            self.status_updated.emit(f"📊 Paralelo ({session_id[:6]}): {processed}/{total} arquivo(s)")
         
-        # Result callback - thread-safe signal emission  
+        # Result callback - direct signal emission
         def on_result(result: ValidationResult, thread_id: str):
-            # Use Qt's thread-safe signal emission
-            QMetaObject.invokeMethod(
-                self,
-                "_emit_result_signal",
-                Qt.ConnectionType.QueuedConnection,
-                QMetaObject.Q_ARG(object, result),
-                QMetaObject.Q_ARG(str, thread_id)
-            )
+            print(f"🔧 DEBUG: Result callback chamado para: {result.document_path}")  # Debug
+            # Add result to list in thread-safe way
+            self._validation_results.append(result)
+            
+            # Emit signals (thread-safe by Qt design)
+            self.validation_result_added.emit(result)
+            
+            # Update statistics
+            self._monitoring_status.files_processed += 1
+            if result.is_valid:
+                self._monitoring_status.files_successful += 1
+                filename = result.document_path.split('/')[-1] if '/' in result.document_path else result.document_path
+                self.status_updated.emit(f"✅ [{thread_id}] Sucesso: {filename}")
+            else:
+                self._monitoring_status.files_failed += 1
+                error_msg = result.errors[0].message if result.errors else "Erro desconhecido"
+                filename = result.document_path.split('/')[-1] if '/' in result.document_path else result.document_path
+                self.status_updated.emit(f"❌ [{thread_id}] Falhou: {filename} - {error_msg}")
         
         self._parallel_service.set_progress_callback(on_progress)
         self._parallel_service.set_result_callback(on_result)
     
-    @Slot(str, int, int)
-    def _emit_progress_signal(self, session_id: str, processed: int, total: int):
-        """Thread-safe method to emit progress signal"""
-        self.processing_progress.emit(session_id, processed, total)
-        self.status_updated.emit(f"📊 Processamento: {processed}/{total} arquivo(s)")
-    
-    @Slot(object, str)
-    def _emit_result_signal(self, result: ValidationResult, thread_id: str):
-        """Thread-safe method to emit result signal"""
-        self._validation_results.append(result)
-        self.validation_result_added.emit(result)
-        
-        # Update statistics
-        self._monitoring_status.files_processed += 1
-        if result.is_valid:
-            self._monitoring_status.files_successful += 1
-        else:
-            self._monitoring_status.files_failed += 1
     
     # Properties
     @property

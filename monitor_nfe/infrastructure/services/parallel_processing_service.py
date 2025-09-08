@@ -111,28 +111,36 @@ class ParallelProcessingService:
             
             self._log_repository.log_info(f"[{thread_id}] 🔄 Iniciando processamento: {file_path.name}")
             
-            # Set up result callback for this thread
-            def thread_result_callback(result: ValidationResult):
-                """Callback for individual validation results from this thread"""
+            # Process the file
+            response = self._process_file_use_case.execute(request)
+            
+            # Process each result immediately and call callbacks
+            print(f"🔧 DEBUG: [{thread_id}] Processando {len(response.results)} resultado(s)")  # Debug
+            for result in response.results:
                 try:
-                    # Call main result callback if set
+                    # Call main result callback immediately for each result
                     if self._result_callback:
+                        print(f"🔧 DEBUG: [{thread_id}] Chamando result callback para {result.document_path}")  # Debug
                         self._result_callback(result, thread_id)
-                    
-                    # Update progress
-                    if self._progress_callback:
-                        completed = len(session.get_completed_files()) + 1  # +1 for current
-                        total = len(session.files)
-                        self._progress_callback(session_id, completed, total)
+                    else:
+                        print(f"🔧 DEBUG: [{thread_id}] result_callback é None!")  # Debug
                         
                 except Exception as e:
                     self._log_repository.log_error(f"Erro no callback de resultado: {e}")
+                    print(f"🔧 DEBUG: Erro no callback: {e}")  # Debug
             
-            # Set callback on use case for this thread
-            self._process_file_use_case.set_result_callback(thread_result_callback)
-            
-            # Process the file
-            response = self._process_file_use_case.execute(request)
+            # Update progress after processing
+            try:
+                if self._progress_callback:
+                    completed_count = len(session.get_completed_files()) + 1  # +1 for current
+                    total_count = len(session.files)
+                    print(f"🔧 DEBUG: [{thread_id}] Chamando progress callback: {completed_count}/{total_count}")  # Debug
+                    self._progress_callback(session_id, completed_count, total_count)
+                else:
+                    print(f"🔧 DEBUG: [{thread_id}] progress_callback é None!")  # Debug
+            except Exception as e:
+                self._log_repository.log_error(f"Erro no callback de progresso: {e}")
+                print(f"🔧 DEBUG: Erro no progress callback: {e}")  # Debug
             
             # Mark as completed
             if response.success:
@@ -148,10 +156,6 @@ class ParallelProcessingService:
             # Mark as error
             session.mark_file_error(file_path, str(e))
             self._log_repository.log_error(f"[{thread_id}] ❌ Erro: {file_path.name} - {e}")
-        
-        finally:
-            # Clear callback to avoid memory leaks
-            self._process_file_use_case.set_result_callback(None)
     
     def _monitor_session_completion(self, session_id: str, futures: List):
         """Monitor session completion and cleanup"""
