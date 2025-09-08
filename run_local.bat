@@ -24,9 +24,11 @@ if not exist "monitor_nfe\main_refactored.py" (
 
 echo ✅ Verificações OK
 
-REM Configurar ambiente Windows
+REM Configurar ambiente Windows (correção threading)
 set PYTHONIOENCODING=utf-8
 set PYTHONUNBUFFERED=1
+set QT_QPA_PLATFORM_PLUGIN_PATH=
+set QT_PLUGIN_PATH=
 
 REM Ir para pasta da aplicação
 cd monitor_nfe
@@ -42,9 +44,18 @@ echo.
 echo 🎯 Iniciando Monitor NFe...
 echo 💡 Feche a janela da aplicação ou pressione Ctrl+C para parar
 echo.
+echo ⚠️  Se der erro de 'ThreadHandle', feche e execute novamente
+echo.
 
-REM Executar aplicação
-python -u main_refactored.py
+REM Executar aplicação com multiprocessing fix
+python -c "
+import multiprocessing
+if __name__ == '__main__':
+    multiprocessing.set_start_method('spawn', force=True)
+    import sys
+    sys.path.insert(0, '.')
+    exec(open('main_refactored.py').read())
+"
 
 cd ..
 echo.
