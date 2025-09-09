@@ -191,6 +191,12 @@ class ParallelProcessingService:
             with self._session_lock:
                 session = self._active_sessions.pop(session_id, None)
                 if session:
+                    # Force cleanup of any remaining temp files
+                    try:
+                        self._process_file_use_case.force_cleanup_temp_files()
+                    except Exception as e:
+                        self._log_repository.log_warning(f"Erro na limpeza final dos arquivos temporários: {e}")
+                    
                     # Clean up temp directory if it was created
                     session.cleanup_temp_directory()
                     self._log_repository.log_debug(f"🧹 Sessão {session_id} removida")

@@ -46,6 +46,22 @@ class ProcessFileUseCase:
         """Set callback function to be called when each result is ready"""
         self._result_callback = callback
     
+    def force_cleanup_temp_files(self):
+        """Force cleanup of all temporary files - use only when processing is completely done"""
+        if hasattr(self, '_temp_xml_files'):
+            # Clear active processing files to allow cleanup
+            original_active = self._active_processing_files.copy()
+            self._active_processing_files.clear()
+            
+            try:
+                self._cleanup_temp_xml_files()
+                self._log_repository.log_info("🧹 Limpeza forçada de arquivos temporários concluída")
+            except Exception as e:
+                self._log_repository.log_error(f"Erro na limpeza forçada: {e}")
+            finally:
+                # Restaurar lista original (embora provavelmente esteja vazia neste ponto)
+                self._active_processing_files = original_active
+    
     def execute(self, request: ProcessFileUseCaseRequest) -> FileProcessingResponse:
         """Execute file processing"""
         start_time = time.time()
@@ -101,6 +117,13 @@ class ProcessFileUseCase:
                     if not xml_file.exists():
                         self._log_repository.log_error(f"❌ Arquivo não existe no momento da validação: {xml_file}")
                         self._log_repository.log_error(f"   Caminho: {xml_file.absolute()}")
+                        # Log additional debugging info
+                        parent_dir = xml_file.parent
+                        if parent_dir.exists():
+                            remaining_files = list(parent_dir.glob("*.xml"))
+                            self._log_repository.log_error(f"   Arquivos XML restantes no diretório: {[f.name for f in remaining_files]}")
+                        else:
+                            self._log_repository.log_error(f"   Diretório pai não existe: {parent_dir}")
                         continue
                     
                     self._log_repository.log_debug(f"✓ Iniciando validação: {xml_file.name} (tamanho: {xml_file.stat().st_size} bytes)")
@@ -149,7 +172,7 @@ class ProcessFileUseCase:
                 if archive_success:
                     self._log_repository.log_info(f"📁 ZIP movido para 'processed': {request.file_path.name}")
             
-            # Clean up temporary XML files
+            # Clean up temporary XML files only AFTER all processing is complete
             self._cleanup_temp_xml_files()
             
             return FileProcessingResponse(
@@ -289,40 +312,59 @@ class ProcessFileUseCase:
     
     def _cleanup_temp_xml_files(self):
         """Clean up temporary XML files created during archive extraction"""
-        if hasattr(self, '_temp_xml_files'):
-            files_to_keep = []
+        if not hasattr(self, '_temp_xml_files') or not self._temp_xml_files:
+            return
             
-            for xml_file in self._temp_xml_files:
-                try:
-                    # Only cleanup files that are NOT currently being processed
-                    if str(xml_file) not in self._active_processing_files:
-                        if xml_file.exists():
-                            xml_file.unlink()
-                            self._log_repository.log_debug(f"✅ Arquivo temporário removido: {xml_file.name}")
-                    else:
-                        # Keep file for later cleanup (it's still being processed)
-                        files_to_keep.append(xml_file)
-                        self._log_repository.log_debug(f"⏳ Mantendo arquivo em processamento: {xml_file.name}")
+        files_to_keep = []
+        
+        for xml_file in self._temp_xml_files:
+            try:
+                # IMPORTANTE: Só remove arquivos que não estão sendo processados E já foram processados
+                file_str = str(xml_file)
+                is_currently_processing = file_str in self._active_processing_files
+                
+                if is_currently_processing:
+                    # Arquivo ainda está sendo processado - manter
+                    files_to_keep.append(xml_file)
+                    self._log_repository.log_debug(f"⏳ Mantendo arquivo em processamento: {xml_file.name}")
+                elif xml_file.exists():
+                    # Arquivo existe e não está sendo processado - remover
+                    xml_file.unlink()
+                    self._log_repository.log_debug(f"✅ Arquivo temporário removido: {xml_file.name}")
+                else:
+                    # Arquivo não existe mais - não precisa manter na lista
+                    self._log_repository.log_debug(f"ℹ️ Arquivo temporário já foi removido: {xml_file.name}")
                         
-                except Exception as e:
-                    self._log_repository.log_warning(f"Erro ao remover arquivo temporário {xml_file.name}: {e}")
-                    files_to_keep.append(xml_file)  # Keep it for retry later
-            
-            # Update the list with files that still need cleanup
-            self._temp_xml_files = files_to_keep
-            
-            # Clean up temp directory if empty (only if no files were kept)
-            if not files_to_keep:
-                try:
-                    if hasattr(self, '_temp_xml_files') and len(self._temp_xml_files) > 0:
-                        temp_xml_dir = self._temp_xml_files[0].parent
-                        if temp_xml_dir.exists() and not any(temp_xml_dir.iterdir()):
-                            temp_xml_dir.rmdir()
-                            self._log_repository.log_debug(f"📁 Diretório temporário removido: {temp_xml_dir}")
-                except Exception as e:
-                    self._log_repository.log_debug(f"Erro ao remover diretório temporário: {e}")
-            else:
-                self._log_repository.log_debug(f"⏳ Mantendo diretório temporário - {len(files_to_keep)} arquivo(s) ainda em processamento")
+            except Exception as e:
+                self._log_repository.log_warning(f"Erro ao processar arquivo temporário {xml_file.name}: {e}")
+                # Em caso de erro, manter o arquivo para tentar depois
+                files_to_keep.append(xml_file)
+        
+        # Atualizar lista com arquivos que ainda precisam ser mantidos
+        self._temp_xml_files = files_to_keep
+        
+        # Tentar limpar diretório temporário se está vazio
+        if not files_to_keep and hasattr(self, '_temp_xml_files'):
+            self._cleanup_empty_temp_directory()
+        elif files_to_keep:
+            self._log_repository.log_debug(f"⏳ Mantendo diretório temporário - {len(files_to_keep)} arquivo(s) ainda precisam ser mantidos")
+    
+    def _cleanup_empty_temp_directory(self):
+        """Remove diretório temporário se estiver vazio"""
+        try:
+            # Buscar todos os diretórios temp_xml que possam existir
+            config = self._config_repository.load_configuration()
+            if config.output_path:
+                temp_xml_dir = Path(config.output_path) / "temp_xml"
+                if temp_xml_dir.exists():
+                    # Verificar se está realmente vazio
+                    if not any(temp_xml_dir.iterdir()):
+                        temp_xml_dir.rmdir()
+                        self._log_repository.log_debug(f"📁 Diretório temporário vazio removido: {temp_xml_dir}")
+                    else:
+                        self._log_repository.log_debug(f"📁 Diretório temporário não está vazio: {temp_xml_dir}")
+        except Exception as e:
+            self._log_repository.log_debug(f"Erro ao remover diretório temporário: {e}")
     
     def _organize_archive_simple(self, archive_path: Path, validation_results: List) -> bool:
         """Simple archive organization - ZIP always goes to processed, XMLs organized individually"""
