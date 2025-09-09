@@ -910,7 +910,12 @@ class ValidaNFeAPI:
         except requests.exceptions.RequestException as e:
             return {"success": False, "message": f"Erro HTTP: {str(e)[:50]}..."}
         except Exception as e:
-            return {"success": False, "message": f"Erro: {str(e)[:50]}..."}
+            error_msg = str(e)
+            print(f"❌ ERRO INESPERADO no send_nfe: {error_msg}")
+            import traceback
+            print("📋 Traceback completo:")
+            traceback.print_exc()
+            return {"success": False, "message": f"Erro inesperado: {error_msg[:100]}..."}
     
     def _extract_nfe_key(self, xml_content):
         """Extract NFe key from XML content"""
@@ -969,7 +974,12 @@ class ValidaNFeAPI:
                 return {"success": False, "message": "Timeout na conexão ⏰"}
                 
         except Exception as e:
-            return {"success": False, "message": f"Erro: {str(e)[:50]}..."}
+            error_msg = str(e)
+            print(f"❌ ERRO INESPERADO no send_nfe: {error_msg}")
+            import traceback
+            print("📋 Traceback completo:")
+            traceback.print_exc()
+            return {"success": False, "message": f"Erro inesperado: {error_msg[:100]}..."}
 
 
 class ParallelAPIManager:
@@ -1037,7 +1047,12 @@ class ParallelAPIManager:
                         else:
                             api_status = "Arquivo não encontrado para API"
                     except Exception as e:
-                        api_status = f"Erro API: {str(e)[:30]}..."
+                        error_msg = str(e)
+                        print(f"❌ ERRO CRÍTICO NA API: {error_msg}")
+                        import traceback
+                        print("📋 Traceback completo:")
+                        traceback.print_exc()
+                        api_status = f"Erro API: {error_msg[:100]}..."
                 else:
                     api_status = "Token não configurado"
             elif not is_valid:
@@ -1637,7 +1652,12 @@ class MonitorThread(QThread):
                             api_status = "Arquivo não encontrado para API"
                         
                     except Exception as e:
-                        api_status = f"Erro API: {str(e)[:30]}..."
+                        error_msg = str(e)
+                        print(f"❌ ERRO CRÍTICO NA API: {error_msg}")
+                        import traceback
+                        print("📋 Traceback completo:")
+                        traceback.print_exc()
+                        api_status = f"Erro API: {error_msg[:100]}..."
             
             # Organize file if organizer is available and auto_organize is enabled
             moved = False
