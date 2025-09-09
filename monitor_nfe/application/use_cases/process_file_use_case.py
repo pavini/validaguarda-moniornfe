@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import List
 from pathlib import Path
 import time
+import threading
 
 from ..interfaces.repositories import IConfigurationRepository, ILogRepository
 from ..interfaces.services import IArchiveService, IFileOrganizerService
@@ -40,7 +41,7 @@ class ProcessFileUseCase:
         self._log_repository = log_repository
         self._result_callback = None
         self._active_processing_files = set()  # Track files currently being processed
-        self._processing_lock = None
+        self._temp_files_lock = threading.RLock()  # Lock para proteger _temp_xml_files
     
     def set_result_callback(self, callback):
         """Set callback function to be called when each result is ready"""
@@ -274,10 +275,11 @@ class ProcessFileUseCase:
                 self._log_repository.log_info(f"Arquivos XML encontrados no arquivo: {len(xml_files)}")
                 
                 # Store extracted file paths for cleanup later
-                if hasattr(self, '_temp_xml_files'):
-                    self._temp_xml_files.extend(xml_files)
-                else:
-                    self._temp_xml_files = xml_files.copy()
+                with self._temp_files_lock:
+                    if hasattr(self, '_temp_xml_files'):
+                        self._temp_xml_files.extend(xml_files)
+                    else:
+                        self._temp_xml_files = xml_files.copy()
                     
         except Exception as e:
             self._log_repository.log_error(f"Erro ao extrair arquivos XML de: {archive_path.name}", e)
@@ -304,44 +306,60 @@ class ProcessFileUseCase:
                 
                 if success:
                     self._log_repository.log_debug(f"Arquivo organizado: {file_path.name}")
+                    
+                    # IMPORTANTE: Remover arquivo da lista de temporários após movimentação bem-sucedida
+                    self._remove_from_temp_list(file_path)
                 else:
                     self._log_repository.log_warning(f"Falha ao organizar arquivo: {file_path.name}")
                     
         except Exception as e:
             self._log_repository.log_error(f"Erro ao organizar arquivo: {file_path.name}", e)
     
+    def _remove_from_temp_list(self, file_path: Path):
+        """Remove arquivo da lista de arquivos temporários após ser movido"""
+        try:
+            with self._temp_files_lock:
+                if hasattr(self, '_temp_xml_files') and self._temp_xml_files:
+                    # Remove da lista se estiver lá
+                    if file_path in self._temp_xml_files:
+                        self._temp_xml_files.remove(file_path)
+                        self._log_repository.log_debug(f"🗑️ Arquivo removido da lista de temporários: {file_path.name}")
+        except Exception as e:
+            self._log_repository.log_debug(f"Erro ao remover arquivo da lista temporária: {e}")
+    
     def _cleanup_temp_xml_files(self):
         """Clean up temporary XML files created during archive extraction"""
-        if not hasattr(self, '_temp_xml_files') or not self._temp_xml_files:
-            return
-            
-        files_to_keep = []
-        
-        for xml_file in self._temp_xml_files:
-            try:
-                # IMPORTANTE: Só remove arquivos que não estão sendo processados E já foram processados
-                file_str = str(xml_file)
-                is_currently_processing = file_str in self._active_processing_files
+        with self._temp_files_lock:
+            if not hasattr(self, '_temp_xml_files') or not self._temp_xml_files:
+                return
                 
-                if is_currently_processing:
-                    # Arquivo ainda está sendo processado - manter
+            files_to_keep = []
+            
+            for xml_file in self._temp_xml_files.copy():  # Use copy para evitar modificação durante iteração
+                try:
+                    # IMPORTANTE: Só remove arquivos que não estão sendo processados E ainda existem
+                    file_str = str(xml_file)
+                    is_currently_processing = file_str in self._active_processing_files
+                    
+                    if is_currently_processing:
+                        # Arquivo ainda está sendo processado - manter
+                        files_to_keep.append(xml_file)
+                        self._log_repository.log_debug(f"⏳ Mantendo arquivo em processamento: {xml_file.name}")
+                    elif xml_file.exists():
+                        # Arquivo existe no temp_xml e não está sendo processado - remover
+                        xml_file.unlink()
+                        self._log_repository.log_debug(f"✅ Arquivo temporário removido: {xml_file.name}")
+                    else:
+                        # Arquivo não existe mais (provavelmente foi movido para processed/errors)
+                        self._log_repository.log_debug(f"ℹ️ Arquivo temporário já foi movido/removido: {xml_file.name}")
+                            
+                except Exception as e:
+                    self._log_repository.log_warning(f"Erro ao processar arquivo temporário {xml_file.name}: {e}")
+                    # Em caso de erro, manter o arquivo para tentar depois
                     files_to_keep.append(xml_file)
-                    self._log_repository.log_debug(f"⏳ Mantendo arquivo em processamento: {xml_file.name}")
-                elif xml_file.exists():
-                    # Arquivo existe e não está sendo processado - remover
-                    xml_file.unlink()
-                    self._log_repository.log_debug(f"✅ Arquivo temporário removido: {xml_file.name}")
-                else:
-                    # Arquivo não existe mais - não precisa manter na lista
-                    self._log_repository.log_debug(f"ℹ️ Arquivo temporário já foi removido: {xml_file.name}")
-                        
-            except Exception as e:
-                self._log_repository.log_warning(f"Erro ao processar arquivo temporário {xml_file.name}: {e}")
-                # Em caso de erro, manter o arquivo para tentar depois
-                files_to_keep.append(xml_file)
-        
-        # Atualizar lista com arquivos que ainda precisam ser mantidos
-        self._temp_xml_files = files_to_keep
+            
+            # Atualizar lista com arquivos que ainda precisam ser mantidos
+            self._temp_xml_files = files_to_keep
         
         # Tentar limpar diretório temporário se está vazio
         if not files_to_keep and hasattr(self, '_temp_xml_files'):
