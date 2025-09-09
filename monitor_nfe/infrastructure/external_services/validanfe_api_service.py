@@ -66,8 +66,24 @@ class ValidaNFeAPIService(IAPIService):
             }
             url = f"{self.base_url}{self.guarda_endpoint}"
             
+            # Log API request details for debugging
+            print(f"[ValidaNFeAPIService] API Request: {url}")
+            print(f"[ValidaNFeAPIService] Headers: {{'X-API-KEY': '[TOKEN]'}}")
+            print(f"[ValidaNFeAPIService] Sending as multipart/form-data with xmlFile field")
+            print(f"[ValidaNFeAPIService] XML content length: {len(xml_content)} chars")
+            print(f"[ValidaNFeAPIService] XML starts with: {xml_content[:100]}...")
+            print(f"[ValidaNFeAPIService] File name: {document.filename}")
+            
             # Make API request
             response = requests.post(url, files=files, headers=headers, timeout=30)
+            
+            # Log response for debugging
+            print(f"[ValidaNFeAPIService] API Response: {response.status_code}")
+            print(f"[ValidaNFeAPIService] Response headers: {dict(response.headers)}")
+            if response.text:
+                print(f"[ValidaNFeAPIService] Response text (first 300 chars): {response.text[:300]}")
+            else:
+                print(f"[ValidaNFeAPIService] Response has no text content")
             
             # Calculate response time
             end_time = time.time()
@@ -94,8 +110,29 @@ class ValidaNFeAPIService(IAPIService):
                         response_time_ms=response_time_ms
                     )
             else:
-                # API error
-                error_message = self._extract_error_message(response)
+                # API error - handle specific status codes
+                if response.status_code == 401:
+                    error_message = "Token inválido/expirado"
+                elif response.status_code == 400:
+                    error_message = f"Validação falhou: {response.text[:100] if response.text else 'Dados inválidos'}"
+                elif response.status_code == 404:
+                    error_message = "Endpoint não encontrado (404) - Verifique a URL da API"
+                elif response.status_code == 409:
+                    # NFe já existe - isso pode ser considerado sucesso
+                    return APIResponse(
+                        success=True,
+                        message="NFe já foi enviada anteriormente",
+                        data={"raw_response": response.text[:200]} if response.text else None,
+                        status_code=response.status_code,
+                        response_time_ms=response_time_ms
+                    )
+                elif response.status_code == 429:
+                    error_message = "API sobrecarregada - tente novamente mais tarde"
+                elif response.status_code == 500:
+                    error_message = "Erro interno do servidor (500)"
+                else:
+                    error_message = self._extract_error_message(response)
+                
                 return APIResponse(
                     success=False,
                     message=error_message,
