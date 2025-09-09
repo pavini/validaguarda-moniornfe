@@ -102,12 +102,17 @@ class NFEValidationService(INFEValidationService):
             )
             return result
         
-        # Check if file is too small
-        if document.file_size < 100:  # Less than 100 bytes is suspicious
+        # Check if file is too small (arquivos < 1KB são suspeitos)
+        if document.file_size < 1024:  # Less than 1KB (1024 bytes) is suspicious
+            if document.file_size < 100:
+                size_desc = f"{document.file_size} bytes"
+            else:
+                size_desc = f"{document.file_size / 1024:.1f}KB"
+            
             result.add_error(
                 ValidationType.STRUCTURE,
                 "Arquivo muito pequeno",
-                f"Arquivo tem apenas {document.file_size} bytes"
+                f"Arquivo tem apenas {size_desc}"
             )
             return result
         

@@ -23,6 +23,7 @@ class MainWindow(QMainWindow):
         self.view_model = view_model
         self.setup_ui()
         self.connect_signals()
+        self.setup_timers()
         self.update_ui_state()
     
     def setup_ui(self):
@@ -329,6 +330,13 @@ class MainWindow(QMainWindow):
         self.view_model.configuration_changed.connect(self.on_configuration_changed)
         self.view_model.processing_progress.connect(self.on_processing_progress)
     
+    def setup_timers(self):
+        """Setup automatic update timers"""
+        # Timer para atualizar contador de reprocessamento a cada 10 segundos
+        self.reprocess_update_timer = QTimer()
+        self.reprocess_update_timer.timeout.connect(self.update_reprocess_count)
+        self.reprocess_update_timer.start(10000)  # 10 segundos
+    
     def apply_modern_styling(self):
         """Apply modern styling with orange theme"""
         self.setStyleSheet("""
@@ -598,12 +606,7 @@ class MainWindow(QMainWindow):
         self.rate_card.value_label.setText(f"{summary['success_rate']:.1f}%")
         
         # Update reprocess card count
-        try:
-            reprocess_count = self._count_reprocess_files()
-            self.reprocess_card.value_label.setText(str(reprocess_count))
-        except Exception as e:
-            print(f"Error updating reprocess count: {e}")
-            self.reprocess_card.value_label.setText("0")
+        self.update_reprocess_count()
         
         # Update status indicator
         if is_monitoring:
@@ -614,6 +617,15 @@ class MainWindow(QMainWindow):
             self.status_indicator.setText("●")
             self.status_indicator.setStyleSheet("color: #FF6B6B;")  # Red
             self.status_label.setText("Sistema Parado")
+    
+    def update_reprocess_count(self):
+        """Update reprocess card count - called by timer and manually"""
+        try:
+            reprocess_count = self._count_reprocess_files()
+            self.reprocess_card.value_label.setText(str(reprocess_count))
+        except Exception as e:
+            print(f"Error updating reprocess count: {e}")
+            self.reprocess_card.value_label.setText("0")
     
     # Event handlers
     def start_monitoring(self):
@@ -768,6 +780,11 @@ class MainWindow(QMainWindow):
         
         # Update statistics cards in real-time
         self.update_statistics_realtime()
+        
+        # Se arquivo foi movido para reprocess, atualizar contador
+        if not result.is_valid:
+            # Dar um pequeno delay para permitir que o arquivo seja movido
+            QTimer.singleShot(1000, self.update_reprocess_count)
     
     def update_statistics_realtime(self):
         """Update statistics cards in real-time as files are processed"""
@@ -914,6 +931,10 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
         
+        # Stop timers
+        if hasattr(self, 'reprocess_update_timer'):
+            self.reprocess_update_timer.stop()
+        
         # Stop monitoring and cleanup
         self.view_model.stop_monitoring()
         event.accept()
@@ -982,6 +1003,8 @@ class MainWindow(QMainWindow):
                     self.add_log_entry(f"❌ Erro ao reprocessar {file_path.name}: {e}")
             
             self.add_log_entry(f"✅ Reprocessamento concluído: {processed_count}/{len(files_to_process)} arquivo(s)")
+            # Atualizar contador imediatamente após reprocessamento
+            self.update_reprocess_count()
             self.update_ui_state()
             
         except Exception as e:

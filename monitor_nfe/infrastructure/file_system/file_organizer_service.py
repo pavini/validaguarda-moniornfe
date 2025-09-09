@@ -157,7 +157,23 @@ class FileOrganizerService(IFileOrganizerService):
         
         # Check each error to determine if it's temporary/retryable
         for error in validation_result.errors:
-            if error.error_type.value == 'api':
+            error_msg_lower = error.message.lower()
+            
+            # ESTRUTURA: Arquivos muito pequenos são erros permanentes (não reprocessar)
+            if error.error_type.value == 'structure':
+                structure_permanent_keywords = [
+                    'muito pequeno', 'arquivo pequeno', 'small',   # Arquivos pequenos
+                    'muito grande', 'arquivo grande', 'large',     # Arquivos grandes  
+                    'não encontrado', 'not found',                # Arquivo não existe
+                    'encoding', 'codificação',                     # Problemas de encoding
+                    'declaração xml', 'xml malformado',            # XML malformado
+                    'conteúdo nfe', 'não é nfe'                   # Não é NFe válida
+                ]
+                
+                if any(keyword in error_msg_lower for keyword in structure_permanent_keywords):
+                    return False  # Erro permanente - vai para pasta errors
+            
+            elif error.error_type.value == 'api':
                 # Permanent errors that should NOT be reprocessed
                 permanent_keywords = [
                     'já existe', 'already exists', 'duplicate',  # File already processed
@@ -172,8 +188,6 @@ class FileOrganizerService(IFileOrganizerService):
                     'service temporarily', 'try again'
                 ]
                 
-                error_msg_lower = error.message.lower()
-                
                 # Check if it's a permanent error
                 if any(keyword in error_msg_lower for keyword in permanent_keywords):
                     return False
@@ -182,5 +196,6 @@ class FileOrganizerService(IFileOrganizerService):
                 if any(keyword in error_msg_lower for keyword in temporary_keywords):
                     return True
         
-        # Default: if unsure, send to reprocess (better to retry than lose)
-        return True
+        # Default: se não conseguir determinar claramente, é melhor colocar em erros
+        # para evitar reprocessamento desnecessário de arquivos com problemas permanentes
+        return False
