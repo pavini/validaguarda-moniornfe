@@ -856,7 +856,8 @@ class ValidaNFeAPI:
             if len(xml_content) > 5 * 1024 * 1024:  # 5MB limit
                 return {"success": False, "message": "Arquivo muito grande (limite 5MB)"}
             
-            response = requests.post(url, files=files, headers=headers, timeout=30)
+            # Try with retry logic for temporary server errors
+        response = self._make_request_with_retry(url, files, headers)
             
             # Log response for debugging
             print(f"API Response: {response.status_code}")
@@ -890,6 +891,12 @@ class ValidaNFeAPI:
                 return {"success": False, "message": "API sobrecarregada - tente novamente ⏰"}
             elif response.status_code == 500:
                 return {"success": False, "message": "Erro interno do servidor (500)"}
+            elif response.status_code == 502:
+                return {"success": False, "message": "Bad Gateway (502) - Servidor indisponível temporariamente ⏰"}
+            elif response.status_code == 503:
+                return {"success": False, "message": "Service Unavailable (503) - Servidor sobrecarregado temporariamente ⏰"}
+            elif response.status_code == 504:
+                return {"success": False, "message": "Gateway Timeout (504) - Timeout no servidor ⏰"}
             else:
                 try:
                     error_text = response.text[:100]
@@ -917,6 +924,51 @@ class ValidaNFeAPI:
             traceback.print_exc()
             return {"success": False, "message": f"Erro inesperado: {error_msg[:100]}..."}
     
+    def _make_request_with_retry(self, url, files, headers, max_retries=3):
+        """Make HTTP request with retry logic for temporary server errors"""
+        import time
+        
+        for attempt in range(max_retries + 1):
+            try:
+                print(f"🌐 Tentativa {attempt + 1}/{max_retries + 1} - Enviando para API...")
+                response = requests.post(url, files=files, headers=headers, timeout=30)
+                
+                # If success or permanent error, return immediately
+                if response.status_code < 500 or response.status_code in [500]:
+                    return response
+                
+                # If temporary error (502, 503, 504) and not last attempt, retry
+                if response.status_code in [502, 503, 504] and attempt < max_retries:
+                    wait_time = (2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                    print(f"⏰ HTTP {response.status_code} - Aguardando {wait_time}s antes de tentar novamente...")
+                    print(f"   Motivo: {response.text[:100] if response.text else 'Servidor indisponível'}")
+                    time.sleep(wait_time)
+                    continue
+                
+                return response
+                
+            except requests.exceptions.Timeout:
+                if attempt < max_retries:
+                    wait_time = (2 ** attempt)
+                    print(f"⏰ Timeout - Tentando novamente em {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise
+            
+            except requests.exceptions.ConnectionError as e:
+                if attempt < max_retries and ("connection" in str(e).lower() or "reset" in str(e).lower()):
+                    wait_time = (2 ** attempt)
+                    print(f"⏰ Erro de conexão - Tentando novamente em {wait_time}s...")
+                    print(f"   Motivo: {str(e)[:100]}")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise
+        
+        # Should not reach here
+        return response
+
     def _extract_nfe_key(self, xml_content):
         """Extract NFe key from XML content"""
         try:

@@ -74,8 +74,8 @@ class ValidaNFeAPIService(IAPIService):
             print(f"[ValidaNFeAPIService] XML starts with: {xml_content[:100]}...")
             print(f"[ValidaNFeAPIService] File name: {document.filename}")
             
-            # Make API request
-            response = requests.post(url, files=files, headers=headers, timeout=30)
+            # Make API request with retry logic
+            response = self._make_request_with_retry(url, files, headers)
             
             # Log response for debugging
             print(f"[ValidaNFeAPIService] API Response: {response.status_code}")
@@ -130,6 +130,12 @@ class ValidaNFeAPIService(IAPIService):
                     error_message = "API sobrecarregada - tente novamente mais tarde"
                 elif response.status_code == 500:
                     error_message = "Erro interno do servidor (500)"
+                elif response.status_code == 502:
+                    error_message = "Bad Gateway (502) - Servidor indisponível temporariamente"
+                elif response.status_code == 503:
+                    error_message = "Service Unavailable (503) - Servidor sobrecarregado temporariamente"
+                elif response.status_code == 504:
+                    error_message = "Gateway Timeout (504) - Timeout no servidor"
                 else:
                     error_message = self._extract_error_message(response)
                 
@@ -228,3 +234,48 @@ class ValidaNFeAPIService(IAPIService):
                 return f"Erro HTTP {response.status_code}"
         except Exception:
             return f"Erro HTTP {response.status_code}"
+    
+    def _make_request_with_retry(self, url, files, headers, max_retries=3):
+        """Make HTTP request with retry logic for temporary server errors"""
+        import time
+        
+        for attempt in range(max_retries + 1):
+            try:
+                print(f"[ValidaNFeAPIService] 🌐 Tentativa {attempt + 1}/{max_retries + 1}")
+                response = requests.post(url, files=files, headers=headers, timeout=30)
+                
+                # If success or permanent error, return immediately
+                if response.status_code < 500 or response.status_code in [500]:
+                    return response
+                
+                # If temporary error (502, 503, 504) and not last attempt, retry
+                if response.status_code in [502, 503, 504] and attempt < max_retries:
+                    wait_time = (2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                    print(f"[ValidaNFeAPIService] ⏰ HTTP {response.status_code} - Retry em {wait_time}s...")
+                    print(f"[ValidaNFeAPIService]    Motivo: {response.text[:100] if response.text else 'Servidor indisponível'}")
+                    time.sleep(wait_time)
+                    continue
+                
+                return response
+                
+            except requests.exceptions.Timeout:
+                if attempt < max_retries:
+                    wait_time = (2 ** attempt)
+                    print(f"[ValidaNFeAPIService] ⏰ Timeout - Retry em {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise
+            
+            except requests.exceptions.ConnectionError as e:
+                if attempt < max_retries and ("connection" in str(e).lower() or "reset" in str(e).lower()):
+                    wait_time = (2 ** attempt)
+                    print(f"[ValidaNFeAPIService] ⏰ Erro de conexão - Retry em {wait_time}s...")
+                    print(f"[ValidaNFeAPIService]    Motivo: {str(e)[:100]}")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise
+        
+        # Should not reach here
+        return response
