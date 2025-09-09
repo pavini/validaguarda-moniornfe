@@ -462,7 +462,9 @@ class XMLValidator:
         self.load_schemas()
     
     def load_schemas(self):
-        print("🔧 Iniciando carregamento de schemas...")
+        print("=" * 60)
+        print("🔧 INICIANDO CARREGAMENTO DE SCHEMAS XSD")
+        print("=" * 60)
         schema_count = 0
         
         try:
@@ -512,16 +514,20 @@ class XMLValidator:
                 print("   ⚠️  Arquivo procNFe_v4.00.xsd não encontrado")
             
             # Summary
-            print(f"📊 Resumo do carregamento:")
+            print("=" * 60)
+            print(f"📊 RESUMO DO CARREGAMENTO DE SCHEMAS:")
             print(f"   Schemas carregados: {schema_count}/2")
             print(f"   Tipos disponíveis: {list(self.schemas.keys())}")
             
             if schema_count == 0:
-                print("❌ Nenhum schema foi carregado - validação não funcionará!")
+                print("🚨 ERRO CRÍTICO: Nenhum schema foi carregado - validação não funcionará!")
+                print("🚨 XMLs serão marcados como inválidos automaticamente!")
             elif schema_count < 2:
-                print("⚠️  Alguns schemas faltam - validação pode falhar para alguns tipos")
+                print("⚠️  ATENÇÃO: Alguns schemas faltam - validação pode falhar para alguns tipos")
             else:
-                print("✅ Todos os schemas carregados com sucesso!")
+                print("✅ SUCESSO: Todos os schemas carregados com sucesso!")
+                print("✅ Validação XSD está funcionando corretamente!")
+            print("=" * 60)
                 
         except Exception as e:
             print(f"❌ Erro crítico ao carregar schemas: {e}")
@@ -612,9 +618,26 @@ class XMLValidator:
         print(f"🔍 Validando estrutura XML: {xml_path}")
         
         try:
+            # IMPORTANTE: Log crítico para debug
+            print(f"⚠️  DEBUG: Verificando schemas disponíveis...")
+            print(f"   self.schemas = {self.schemas}")
+            print(f"   Número de schemas: {len(self.schemas) if self.schemas else 0}")
+            print(f"   Tipos disponíveis: {list(self.schemas.keys()) if self.schemas else 'NENHUM'}")
+            
+            if not self.schemas:
+                print("❌ PROBLEMA CRÍTICO: Nenhum schema carregado!")
+                print("❌ Tentando recarregar schemas...")
+                self.load_schemas()  # Tentar recarregar
+                
+                if not self.schemas:
+                    print("❌ FALHA: Schemas ainda não carregados após tentativa de recarga")
+                    return "⚠️  Schemas não encontrados - validação desabilitada"
+                else:
+                    print("✅ SUCESSO: Schemas recarregados com sucesso!")
+                    
             if not self.schemas:
                 print("❌ Nenhum schema carregado!")
-                return "Schemas não encontrados"
+                return "⚠️  Schemas não encontrados"
             
             print(f"   Schemas disponíveis: {list(self.schemas.keys())}")
             

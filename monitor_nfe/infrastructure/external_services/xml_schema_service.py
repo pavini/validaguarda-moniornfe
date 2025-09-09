@@ -117,6 +117,10 @@ class XMLSchemaService(IXMLSchemaService):
                 )
                 return result
             
+            print(f"🔍 Iniciando validação XSD para: {document.filename}")
+            print(f"   Schema usado: {schema_key}")
+            print(f"   Tipo de documento: {doc_type.value}")
+            
             # Validate against schema
             if schema.validate(xml_doc):
                 result.schema_valid = True
@@ -124,16 +128,29 @@ class XMLSchemaService(IXMLSchemaService):
             else:
                 result.schema_valid = False
                 
-                # Add schema validation errors
-                for error in schema.error_log:
+                print(f"❌ Falha na validação de schema: {document.filename} - {len(schema.error_log)} erro(s)")
+                print("📋 Detalhes dos erros:")
+                
+                # Add schema validation errors with detailed logging
+                for i, error in enumerate(schema.error_log, 1):
+                    error_msg = f"Erro de schema: {error.message}"
+                    error_detail = f"Linha {error.line}, Coluna {error.column}" if error.line and error.column else f"Linha {error.line}" if error.line else "Posição não especificada"
+                    
                     result.add_error(
                         ValidationType.SCHEMA,
-                        f"Erro de schema: {error.message}",
-                        f"Linha {error.line}" if error.line else None,
+                        error_msg,
+                        error_detail,
                         error.line
                     )
+                    
+                    print(f"   {i:2d}. {error.message}")
+                    print(f"       Posição: {error_detail}")
+                    if hasattr(error, 'path') and error.path:
+                        print(f"       XPath: {error.path}")
                 
-                print(f"❌ Falha na validação de schema: {document.filename} - {len(schema.error_log)} erro(s)")
+                # Log a summary for debugging
+                print(f"⚠️  RESUMO: {document.filename} falhou na validação XSD com {len(schema.error_log)} erro(s)")
+                print(f"   Primeiros erros: {[e.message[:50] + '...' if len(e.message) > 50 else e.message for e in schema.error_log[:3]]}")
             
             return result
             
@@ -175,27 +192,44 @@ class XMLSchemaService(IXMLSchemaService):
             return False
     
     def _parse_xml_document(self, document: NFEDocument) -> Optional[etree._Element]:
-        """Parse XML document with multiple encoding attempts"""
+        """Parse XML document with multiple encoding attempts and better error handling"""
         encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
         
         for encoding in encodings:
             try:
+                # Method 1: Try reading as bytes first (avoids encoding declaration issues)
+                try:
+                    with open(document.file_path, 'rb') as f:
+                        xml_bytes = f.read()
+                    
+                    # Parse directly from bytes
+                    return etree.fromstring(xml_bytes)
+                    
+                except etree.XMLSyntaxError:
+                    # If binary parsing fails, try text parsing
+                    pass
+                
+                # Method 2: Read as text and encode to bytes
                 with open(document.file_path, 'r', encoding=encoding) as f:
                     xml_content = f.read()
                 
-                # Parse XML
-                return etree.fromstring(xml_content.encode('utf-8'))
+                # Convert to bytes to avoid "Unicode strings with encoding declaration" error
+                xml_bytes = xml_content.encode('utf-8')
+                
+                # Parse XML from bytes
+                return etree.fromstring(xml_bytes)
                 
             except UnicodeDecodeError:
                 continue
             except etree.XMLSyntaxError as e:
-                print(f"   ❌ Erro de sintaxe XML: {e}")
-                return None
+                print(f"   ❌ Erro de sintaxe XML ({encoding}): {e}")
+                # Try next encoding instead of returning None immediately
+                continue
             except Exception as e:
-                print(f"   ❌ Erro ao analisar XML: {e}")
-                return None
+                print(f"   ❌ Erro ao analisar XML ({encoding}): {e}")
+                continue
         
-        print(f"   ❌ Não foi possível ler o arquivo com nenhum encoding")
+        print(f"   ❌ Não foi possível fazer parse do XML com nenhum encoding")
         return None
     
     def get_loaded_schemas(self) -> Dict[str, str]:
